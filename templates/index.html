@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Memory Allocation Simulator</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="container">
+    <header class="hero">
+      <p class="eyebrow">OPERATING SYSTEMS PROJECT</p>
+      <h1>Memory Allocation Simulator</h1>
+      <p>Enter process details, choose an algorithm, and view the allocation results.</p>
+      <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false">🌙 Dark mode</button>
+    </header>
+
+    <section class="panel">
+      <h2>Simulation Inputs</h2>
+      <form action="{{ url_for('simulate') }}" method="post" id="sim-form">
+        <div class="field">
+          <label for="algorithm">Allocation algorithm</label>
+          <select id="algorithm" name="algorithm" required>
+            <optgroup label="Memory Distribution Policies">
+              <option value="equal" {% if selected_algorithm == 'equal' %}selected{% endif %}>Equal Allocation</option>
+              <option value="proportional" {% if selected_algorithm == 'proportional' %}selected{% endif %}>Proportional Allocation</option>
+              <option value="priority" {% if selected_algorithm == 'priority' %}selected{% endif %}>Priority-Based Allocation</option>
+            </optgroup>
+            <optgroup label="Contiguous Allocation Algorithms">
+              <option value="first_fit" {% if selected_algorithm == 'first_fit' %}selected{% endif %}>First Fit</option>
+              <option value="best_fit" {% if selected_algorithm == 'best_fit' %}selected{% endif %}>Best Fit</option>
+              <option value="worst_fit" {% if selected_algorithm == 'worst_fit' %}selected{% endif %}>Worst Fit</option>
+              <option value="next_fit" {% if selected_algorithm == 'next_fit' %}selected{% endif %}>Next Fit</option>
+            </optgroup>
+          </select>
+        </div>
+
+        <div class="field" id="memory-field">
+          <label for="memory">Total available memory (MB)</label>
+          <input id="memory" name="memory" type="number" min="0.01" step="any"
+                 placeholder="e.g. 1000" value="{{ form_data.get('memory', '') if form_data else '' }}">
+          <small>Used for Equal, Proportional, and Priority allocation.</small>
+        </div>
+
+        <div class="field">
+          <label for="processes">Process memory requirements (MB)</label>
+          <input id="processes" name="processes" type="text" required
+                 placeholder="e.g. 212, 417, 112, 426"
+                 value="{{ form_data.get('processes', '') if form_data else '' }}">
+          <small>Enter one size per process, separated by commas. Process IDs are generated automatically.</small>
+        </div>
+
+        <div class="field" id="priority-field">
+          <label for="priorities">Process priorities (optional)</label>
+          <input id="priorities" name="priorities" type="text"
+                 placeholder="e.g. 1, 2, 3, 1"
+                 value="{{ form_data.get('priorities', '') if form_data else '' }}">
+          <small>One priority per process. Smaller number means higher priority. Leave blank to use priority 1 for all.</small>
+        </div>
+
+        <div class="field" id="blocks-field">
+          <label for="blocks">Free memory block sizes (MB)</label>
+          <input id="blocks" name="blocks" type="text"
+                 placeholder="e.g. 100, 500, 200, 300, 600"
+                 value="{{ form_data.get('blocks', '') if form_data else '' }}">
+          <small>Used for First Fit, Best Fit, Worst Fit, and Next Fit.</small>
+        </div>
+
+        <button type="submit">Run Simulation</button>
+      </form>
+    </section>
+
+    {% if error %}
+    <section class="notice error"><strong>Input error:</strong> {{ error }}</section>
+    {% endif %}
+
+    {% if results is defined %}
+    <section class="panel results">
+      <div class="results-heading">
+        <div>
+          <p class="eyebrow">SIMULATION OUTPUT</p>
+          <h2>{{ result_name }}</h2>
+        </div>
+        <span class="status">Completed</span>
+      </div>
+
+      <div class="stats">
+        <article class="stat"><span>Total memory</span><strong>{{ "%.2f"|format(total_memory) }} MB</strong></article>
+        <article class="stat"><span>Used memory</span><strong>{{ "%.2f"|format(used_memory) }} MB</strong></article>
+        <article class="stat"><span>Free memory</span><strong>{{ "%.2f"|format(free_memory) }} MB</strong></article>
+        <article class="stat"><span>Utilization</span><strong>{{ "%.2f"|format(utilization) }}%</strong></article>
+      </div>
+
+      <h3>Process Allocation Table</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Process</th>
+              <th>Requested (MB)</th>
+              <th>Allocated (MB)</th>
+              <th>Block / Partition</th>
+              <th>Fragmentation (Internal / External)</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in results %}
+            <tr>
+              <td>{{ row.process }}</td>
+              <td>{{ "%.2f"|format(row.requested) }}</td>
+              <td>{{ "%.2f"|format(row.allocated) }}</td>
+              <td>{% if row.block %}B{{ row.block }}{% elif selected_algorithm == 'equal' %}Equal share{% else %}—{% endif %}</td>
+              <td>
+                {% if row.fragmentation is defined %}{{ row.fragmentation }}{% else %}—{% endif %}
+                {% if row.unmet_request is defined and row.unmet_request > 0 %}<br><small>Memory required: {{ "%.2f"|format(row.unmet_request) }} MB</small>{% endif %}
+              </td>
+              <td>
+                {% if row.allocated >= row.requested %}
+                  <span class="pill success">Allocated</span>
+                {% elif row.allocated > 0 %}
+                  <span class="pill warning">Partial</span>
+                {% else %}
+                  <span class="pill danger">Not allocated</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if holes is not none %}
+      <h3>Remaining free space by block</h3>
+      <div class="holes">
+        {% for hole in holes %}
+        <div class="hole-row">
+          <span>B{{ loop.index }}</span>
+          <div class="bar-track"><div class="bar-fill" style="width: {{ (hole / (holes|sum if holes|sum > 0 else 1) * 100) }}%"></div></div>
+          <strong>{{ "%.2f"|format(hole) }} MB</strong>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if selected_algorithm == 'equal' %}
+      <p class="footnote">Equal Allocation assigns each process an equal partition (total memory ÷ process count). If the request is smaller than its partition, the unused partition space is internal fragmentation. If the request is larger, the process cannot fit in that partition; the excess is shown as an unmet request, not external fragmentation.</p>
+      {% elif external_fragmentation is not none %}
+      <p class="footnote">External fragmentation indicator = total free memory − largest free hole = {{ "%.2f"|format(external_fragmentation) }} MB. This estimates free space scattered across smaller holes; it is not the same as internal fragmentation.</p>
+      {% else %}
+      <p class="footnote">Fragmentation depends on the allocation model. Proportional and Priority-Based policies do not model fixed partitions or contiguous free holes, so internal/external fragmentation is not calculated for these policies.</p>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    <footer>Memory Allocation Simulator · Built with Python, Flask, HTML, CSS, and JavaScript</footer>
+  </main>
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
